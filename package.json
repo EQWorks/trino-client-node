@@ -1,0 +1,31 @@
+{
+  "name": "trino-client-node",
+  "version": "0.0.1",
+  "description": "Streaming client for Node.js",
+  "main": "index.js",
+  "files": [
+    "*.js",
+    "README.md",
+    "LICENSE"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/EQWorks/trino-client-node.git"
+  },
+  "homepage": "https://github.com/EQWorks/trino-client-node",
+  "author": {
+    "name": "EQ Works",
+    "email": "dev@eqworks.com",
+    "url": "https://eqworks.com/"
+  },
+  "scripts": {
+    "lint": "eslint ."
+  },
+  "license": "MIT",
+  "dependencies": {
+    "stream-json": "^1.7.4"
+  },
+  "devDependencies": {
+    "eslint": "^8.18.0"
+  }
+}
