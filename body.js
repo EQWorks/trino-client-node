@@ -1,4 +1,4 @@
-const { Duplex } = require('stream')
+const { Duplex, pipeline } = require('stream')
 
 const Assembler = require('stream-json/Assembler')
 const { parser: JSONParser } = require('stream-json/Parser')
@@ -15,125 +15,132 @@ class TrinoBodyStreamer extends Duplex {
     this.current = undefined
     this.columns = undefined
     this.assembler = new Assembler()
-    
-    this.parser = JSONParser({ packKeys: true, jsonStreaming: true })
-    this.parser.on('data', (chunk) => {
-      if (!this._handleToken(chunk)) {
-        this.parser.pause()
-        this.streamer.on('drain', () => this.parser.resume())
-      }
-    })
-    this.parser.once('end', () => this.streamer.end())
-    this.parser.once('error', (err) =>
-      propagateDestroy(err, this.parser, [this, this.streamer]))
-    
-    this.streamer = streamArray()
-    this.streamer.on('data', ({ value }) => {
-      console.log('reading from streamer')
-      let val = value
-      if (!rowMode) {
-        if (!this.columns) {
-          return this.destroy(new Error('columns missing'))
+
+    this._inStream = JSONParser({ packKeys: true, jsonStreaming: true })
+    const _this = this
+    const transforms = [
+      this._inStream,
+      async function* (src) {
+        for await (const token of src) {
+          const data = _this._processToken(token)
+          if (data) {
+            yield data
+          }
         }
-        val = value.reduce((acc, v, i) => {
-          acc[this.columns[i].name] = v
-          return acc
-        }, {})
-      }
+      },
+      streamArray(),
+      async function* (src) {
+        for await (const { value } of src) {
+          if (_this.rowMode) {
+            yield value
+            continue
+          }
+          if (!_this.columns) {
+            throw new Error('columns missing')
+          }
+          // transform into object { columnName: value }
+          yield value.reduce((acc, v, i) => {
+            acc[_this.columns[i].name] = v
+            return acc
+          }, {})
+        }
+      },
+    ]
+    this._outStream = pipeline(
+      transforms,
+      (err) => {
+        if (err) {
+          return propagateDestroy(err, { dest: [this] })
+        }
+        this.push(null)
+      },
+    )
+    this._outStream.on('data', (data) => {
       // handle back pressure
-      if (!this.push(val)) {
-        console.log('pausing body streamer')
-        this.streamer.pause()
+      if (!this.push(data)) {
+        this._outStream.pause()
       }
     })
-    this.streamer.once('error', (err) =>
-      propagateDestroy(err, this.streamer, [this, this.parser]))
-    this.streamer.once('end', () => this.push(null))
   }
 
   _write(chunk, _, cb) {
     // handle backpressure
-    if (this.parser.write(chunk)) {
+    if (this._inStream.write(chunk)) {
       return cb(null)
     }
-    this.parser.once('drain', () => cb(null))
+    this._inStream.once('drain', () => cb(null))
   }
 
   _read() {
-    // push new data
-    if (this.streamer.isPaused()) {
-      console.log('resuming body stream')
-      this.streamer.resume()
+    // ask for new data
+    if (this._outStream.isPaused()) {
+      this._outStream.resume()
     }
   }
 
-  // return false if write buffer is full
-  _handleToken(token) {
-    let readableHasCapacity = true
-    try {
-      if (token.name === 'startObject') {
-        this.depth += 1
-        // object root, no further processing
-        if (this.depth === 1) {
-          return readableHasCapacity
-        }
+  // return data chunk
+  _processToken(token) {
+    let data
+    if (token.name === 'startObject') {
+      this.depth += 1
+      // object root, no further processing
+      if (this.depth === 1) {
+        return data
       }
-      if (this.depth === 0) {
-        return readableHasCapacity
-      }
-
-      // next top-level key
-      if (this.depth === 1 && token.name === 'keyValue') {
-        // push previous top-level key
-        if (this.current && this.current !== 'data') {
-          if (!this.rowMode && this.current === 'columns') {
-            this.columns = this.assembler.current
-          }
-          this.emit('meta', this.current, this.assembler.current)
-        }
-        this.current = token.value
-        return readableHasCapacity
-      }
-
-      if (!this.current) {
-        return readableHasCapacity
-      }
-
-      // push data to assembler or to read buffer
-      if (this.current === 'data') {
-        readableHasCapacity = this.streamer.write(token)
-      } else {
-        this.assembler.consume(token)
-      }
-
-      if (token.name === 'endObject') {
-        this.depth -= 1
-        // we're done - push last key
-        if (this.depth === 0 && this.current !== 'data') {
-          if (!this.rowMode && this.current === 'columns') {
-            this.columns = this.assembler.current
-          }
-          this.emit('meta', this.current, this.assembler.current)
-          this.current = undefined
-        }
-      }
-      if (!readableHasCapacity) {
-        console.log('readable buffer is full')
-      }
-      return readableHasCapacity
-    } catch (err) {
-      this.destroy(err)
     }
+    if (this.depth === 0) {
+      return data
+    }
+
+    // next top-level key
+    if (this.depth === 1 && token.name === 'keyValue') {
+      // push previous top-level key
+      if (this.current && this.current !== 'data') {
+        if (!this.rowMode && this.current === 'columns') {
+          this.columns = this.assembler.current
+        }
+        this.emit('meta', this.current, this.assembler.current)
+      }
+      this.current = token.value
+      return data
+    }
+
+    if (!this.current) {
+      return data
+    }
+
+    // push data to assembler or to read buffer
+    if (this.current === 'data') {
+      data = token
+    } else {
+      this.assembler.consume(token)
+    }
+
+    if (token.name === 'endObject') {
+      this.depth -= 1
+      // we're done - push last key
+      if (this.depth === 0 && this.current !== 'data') {
+        if (!this.rowMode && this.current === 'columns') {
+          this.columns = this.assembler.current
+        }
+        this.emit('meta', this.current, this.assembler.current)
+        this.current = undefined
+        this.emit('done')
+      }
+    }
+    return data
   }
 
   _final(cb) {
-    this.parser.end()
+    this._outStream.end()
     cb(null)
   }
 
   _destroy(err, cb) {
-    // TODO: put any cleanup here
-    console.log('destroying body stream', err)
+    if (!err) {
+      return cb(null)
+    }
+    propagateDestroy(err, { dest: [this._outStream] })
     cb(err)
   }
 }

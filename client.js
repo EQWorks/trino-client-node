@@ -1,6 +1,7 @@
 const http = require('https')
 const { URL } = require('url')
 const { createGunzip } = require('zlib')
+const { pipeline } = require('stream')
 
 const TrinoBodyStreamer = require('./body')
 const { propagateDestroy } = require('./utils')
@@ -30,7 +31,7 @@ class TrinoClient {
     })
   }
 
-  _request(query, stream, nextUri, isCancelled) {
+  _request(query, bodyStream, nextUri, isCancelled) {
     return new Promise((resolve, reject) => {
       const options = {
         agent: this.httpAgent,
@@ -59,7 +60,7 @@ class TrinoClient {
       }
       const req = http.request(options)
       req.once('error', (err) => {
-        propagateDestroy(err, req)
+        propagateDestroy(err, { src: req })
         reject(err)
       })
       if (!nextUri) {
@@ -77,44 +78,39 @@ class TrinoClient {
       req.once('response', (res) => {
         res.once('error', (err) => {
           err.statusCode = res.statusCode
-          propagateDestroy(err, res, [req])
+          propagateDestroy(err, { src: res, dest: [req, bodyStream] })
         })
         req.once('error', (err) => {
-          propagateDestroy(err, req, [res])
+          propagateDestroy(err, { src: req, dest: [res] })
         })
         let uncompressedRes = res
         if (res.headers['content-encoding'] === 'gzip') {
-          // TODO: use pipeline
-          uncompressedRes = res.pipe(createGunzip())
-          res.once('error', (err) => propagateDestroy(err, res, [uncompressedRes]))
-          uncompressedRes.once('error', (err) => propagateDestroy(err, uncompressedRes, [res]))
+          uncompressedRes = pipeline(res, createGunzip(), () => {})
         }
         const meta = {}
         const populateMeta = (key, value) => meta[key] = value
-        const bubbleUpError = (err) => propagateDestroy(err, stream, [uncompressedRes])
+        const bubbleUpError = (err) => propagateDestroy(err, { src: bodyStream, dest: [uncompressedRes] })
         uncompressedRes.once('close', () => {
-        // uncompressedRes.once('end', () => {
-          uncompressedRes.unpipe(stream)
-          stream.off('error', bubbleUpError)
-          stream.off('meta', populateMeta)
+          uncompressedRes.unpipe(bodyStream)
+          bodyStream.off('error', bubbleUpError)
           if (!res.complete) {
             return res.destroy(new Error('The connection was terminated while the message was still being sent'))
           }
           // error without body
           if (res.statusCode < 200 || res.statusCode >= 300) {
-            // return reject(new Error(`Server returned status code: ${res.statusCode}`))
             return res.destroy(new Error(`Server returned: ${res.statusMessage}`))
           }
           if (isCancelled) {
-            // return reject(new Error('Query successfully cancelled by user!'))
             return res.destroy(new Error('Query successfully cancelled by user!'))
           }
+        })
+        bodyStream.once('error', bubbleUpError)
+        bodyStream.on('meta', populateMeta)
+        bodyStream.once('done', () => {
+          bodyStream.off('meta', populateMeta)
           resolve(meta)
         })
-        // uncompressedRes.once('error', forwardError)
-        uncompressedRes.pipe(stream, { end: false })
-        stream.once('error', bubbleUpError)
-        stream.on('meta', populateMeta)
+        uncompressedRes.pipe(bodyStream, { end: false })
       })
       // timeout after the socket is created and the req is sent
       req.setTimeout(10000)
@@ -122,22 +118,21 @@ class TrinoClient {
         const err = new Error('ETIMEDOUT')
         req.destroy(err)
       })
-      // req.on('finish', () => console.log('request sent'))
       req.end()
     })
   }
 
   query(query) {
-    const stream = new TrinoBodyStreamer()
+    const bodyStream = new TrinoBodyStreamer()
     let isCancelled = false
-    stream.cancel = () => isCancelled = true;
+    bodyStream.cancel = () => isCancelled = true;
     (async () => {
       try {
         let i = 0
         let nextUri
         do {
           try {
-            const meta = await this._request(query, stream, nextUri, isCancelled)
+            const meta = await this._request(query, bodyStream, nextUri, isCancelled)
             i = 0
             nextUri = meta.nextUri
           } catch (err) {
@@ -153,11 +148,11 @@ class TrinoClient {
           }
         } while (nextUri)
       } catch (err) {
-        stream.destroy(err)
+        bodyStream.destroy(err)
       }
-      stream.end()
+      bodyStream.end()
     })()
-    return stream
+    return bodyStream
   }
 }
 

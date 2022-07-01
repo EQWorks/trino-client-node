@@ -1,8 +1,8 @@
 const { Readable, Writable } = require('stream')
 
 
-const propagateDestroy = (err, src, destinations = []) => {
-  [src, ...destinations].forEach((stream) => {
+const propagateDestroy = (err, { src, dest = [] } = {}) => {
+  [src, ...dest].filter(stream => stream).forEach((stream) => {
     if (
       !stream.destroyed
       && (
