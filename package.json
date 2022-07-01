@@ -2,6 +2,9 @@
   "name": "trino-client-node",
   "version": "0.0.1",
   "description": "Streaming client for Node.js",
+  "engines": {
+    "node": "14.x"
+  },
   "main": "index.js",
   "files": [
     "*.js",
