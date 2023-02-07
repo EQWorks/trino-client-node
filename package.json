@@ -1,5 +1,5 @@
 {
-  "name": "trino-client-node",
+  "name": "@eqworks/trino-client-node",
   "version": "0.0.1",
   "description": "Streaming client for Node.js",
   "engines": {

@@ -1,5 +1,4 @@
-const { Duplex, pipeline } = require('stream')
-
+const { Duplex, Transform } = require('stream')
 const Assembler = require('stream-json/Assembler')
 const { parser: JSONParser } = require('stream-json/Parser')
 const { streamArray } = require('stream-json/streamers/StreamArray')
@@ -18,43 +17,54 @@ class TrinoBodyStreamer extends Duplex {
 
     this._inStream = JSONParser({ packKeys: true, jsonStreaming: true })
     const _this = this
-    const transforms = [
-      this._inStream,
-      async function* (src) {
-        for await (const token of src) {
-          const data = _this._processToken(token)
-          if (data) {
-            yield data
-          }
+
+    const processToken = new Transform({
+      objectMode: true,
+      transform(token, _, cb) {
+        const data = _this._processToken(token)
+        if (data) {
+          cb(null, data)
+          return
         }
-      },
-      streamArray(),
-      async function* (src) {
-        for await (const { value } of src) {
-          if (_this.rowMode) {
-            yield value
-            continue
-          }
-          if (!_this.columns) {
-            throw new Error('columns missing')
-          }
-          // transform into object { columnName: value }
-          yield value.reduce((acc, v, i) => {
-            acc[_this.columns[i].name] = v
-            return acc
-          }, {})
+        cb(null)
+      }
+    })
+    const transformToObject = new Transform({
+      objectMode: true,
+      transform({ value }, _, cb) {
+        if (_this.rowMode) {
+          cb(null, value)
+          return
         }
-      },
-    ]
-    this._outStream = pipeline(
-      transforms,
-      (err) => {
-        if (err) {
-          return propagateDestroy(err, { dest: [this] })
+        if (!_this.columns) {
+          cb('columns missing')
+          return
         }
-        this.push(null)
-      },
-    )
+        // transform into object { columnName: value }
+        cb(null, value.reduce((acc, v, i) => {
+          acc[_this.columns[i].name] = v
+          return acc
+        }, {}))
+      }
+    })
+
+    this._outStream = this._inStream
+    .pipe(processToken)
+    .on('error', (err) => {
+      propagateDestroy(err, { dest: [this] })
+    })
+    .pipe(streamArray())
+    .on('error', (err) => {
+      propagateDestroy(err, { dest: [this] })
+    })
+    .pipe(transformToObject)
+    .on('error', (err) => {
+      propagateDestroy(err, { dest: [this] })
+    })
+    .on('end', () => {
+      this.push(null)
+    })
+
     this._outStream.on('data', (data) => {
       // handle back pressure
       if (!this.push(data)) {
