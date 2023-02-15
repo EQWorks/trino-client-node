@@ -31,7 +31,7 @@ class TrinoClient {
     })
   }
 
-  _request(query, bodyStream, nextUri, isCancelled) {
+  _request(query, bodyStream, nextUri, isCancelled, headers) {
     return new Promise((resolve, reject) => {
       const options = {
         agent: this.httpAgent,
@@ -53,6 +53,7 @@ class TrinoClient {
             'Content-Type': 'text/plain',
             'Accept-Encoding': 'gzip, identify',
             'X-Trino-Source': this.name,
+            ...headers,
           },
           path: '/v1/statement',
           method: 'POST',
@@ -127,11 +128,18 @@ class TrinoClient {
     let meta_callback
     let columns_callback
     let error_callback
+    let headers = {}
     if (typeof opts === 'object') {
       query = opts.query
       meta_callback = opts.meta
       columns_callback = opts.columns
       error_callback = opts.error
+      if (opts.catalog) {
+        headers['X-Trino-Catalog'] = opts.catalog;
+        if (opts.schema) {
+          headers['X-Trino-Schema'] = opts.schema;
+        }
+      }
     }else {
       query = opts
     }
@@ -145,7 +153,7 @@ class TrinoClient {
         let meta
         do {
           try {
-            meta = await this._request(query, bodyStream, nextUri, isCancelled)
+            meta = await this._request(query, bodyStream, nextUri, isCancelled, headers)
             i = 0
             nextUri = meta.nextUri
           } catch (err) {
