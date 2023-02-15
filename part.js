@@ -10,6 +10,7 @@ class PartStreamer extends Writable {
     this._partHandler = partHandler // cb
     this._targetPartBytes = partSizeMB * (2 ** 20) // in MB
     this._parts = []
+    this._partsSize = []
     this._isPartInit = false
     this._reject = undefined
   }
@@ -96,7 +97,7 @@ class PartStreamer extends Writable {
     }
     this._parts.push(part)
     // call handler (sync so setup can happen before pushing data to stream) with part stream
-    this._partHandler(part.partIndex, part.partStream)
+    this._partHandler(part.partIndex, part.partStream, this._partsSize)
     await this._writeToPart('[')
     this._isPartInit = true
   }
@@ -114,12 +115,14 @@ class PartStreamer extends Writable {
   async _write(chunk, _, cb) {
     try {
       if (!this._isPartInit) {
+        this._partsSize[this._parts.length] = 0
         await this._initPart()
       } else {
         await this._writeToPart(',')
       }
       await this._writeToPart(JSON.stringify(chunk))
       const part = this._parts[this._parts.length - 1]
+      this._partsSize[this._parts.length - 1] += 1
       part.partEnd = part.partEnd === undefined ? part.partStart : part.partEnd + 1
       if (part.partBytes >= this._targetPartBytes) {
         await this._endPart()
