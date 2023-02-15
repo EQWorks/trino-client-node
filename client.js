@@ -122,7 +122,19 @@ class TrinoClient {
     })
   }
 
-  query(query) {
+  query(opts) {
+    let query
+    let meta_callback
+    let columns_callback
+    let error_callback
+    if (typeof opts === 'object') {
+      query = opts.query
+      meta_callback = opts.meta
+      columns_callback = opts.columns
+      error_callback = opts.error
+    }else {
+      query = opts
+    }
     const bodyStream = new TrinoBodyStreamer()
     let isCancelled = false
     bodyStream.cancel = () => isCancelled = true;
@@ -130,9 +142,10 @@ class TrinoClient {
       try {
         let i = 0
         let nextUri
+        let meta
         do {
           try {
-            const meta = await this._request(query, bodyStream, nextUri, isCancelled)
+            meta = await this._request(query, bodyStream, nextUri, isCancelled)
             i = 0
             nextUri = meta.nextUri
           } catch (err) {
@@ -147,6 +160,15 @@ class TrinoClient {
             throw err
           }
         } while (nextUri)
+        if (meta_callback) {
+          meta_callback(meta)
+        }
+        if (columns_callback && meta.columns) {
+          columns_callback(meta.columns)
+        }
+        if (error_callback && meta.error) {
+          error_callback(meta.error)
+        }
       } catch (err) {
         bodyStream.destroy(err)
       }
