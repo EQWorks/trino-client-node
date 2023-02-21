@@ -29,6 +29,8 @@
     "stream-json": "^1.7.4"
   },
   "devDependencies": {
-    "eslint": "^8.18.0"
+    "eslint": "^8.18.0",
+    "eslint-plugin-import": "^2.27.5",
+    "eslint-config-airbnb-base": "^15.0.0"
   }
 }

@@ -27,7 +27,7 @@ class TrinoBodyStreamer extends Duplex {
           return
         }
         cb(null)
-      }
+      },
     })
     const transformToObject = new Transform({
       objectMode: true,
@@ -45,25 +45,25 @@ class TrinoBodyStreamer extends Duplex {
           acc[_this.columns[i].name] = v
           return acc
         }, {}))
-      }
+      },
     })
 
     this._outStream = this._inStream
-    .pipe(processToken)
-    .on('error', (err) => {
-      propagateDestroy(err, { dest: [this] })
-    })
-    .pipe(streamArray())
-    .on('error', (err) => {
-      propagateDestroy(err, { dest: [this] })
-    })
-    .pipe(transformToObject)
-    .on('error', (err) => {
-      propagateDestroy(err, { dest: [this] })
-    })
-    .on('end', () => {
-      this.push(null)
-    })
+      .pipe(processToken)
+      .on('error', (err) => {
+        propagateDestroy(err, { dest: [this] })
+      })
+      .pipe(streamArray())
+      .on('error', (err) => {
+        propagateDestroy(err, { dest: [this] })
+      })
+      .pipe(transformToObject)
+      .on('error', (err) => {
+        propagateDestroy(err, { dest: [this] })
+      })
+      .on('end', () => {
+        this.push(null)
+      })
 
     this._outStream.on('data', (data) => {
       // handle back pressure

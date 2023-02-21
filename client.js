@@ -31,7 +31,7 @@ class TrinoClient {
     })
   }
 
-  _request(query, bodyStream, nextUri, isCancelled) {
+  _request({ query, bodyStream, nextUri, isCancelled, headers }) {
     return new Promise((resolve, reject) => {
       const options = {
         agent: this.httpAgent,
@@ -53,6 +53,7 @@ class TrinoClient {
             'Content-Type': 'text/plain',
             'Accept-Encoding': 'gzip, identify',
             'X-Trino-Source': this.name,
+            ...headers,
           },
           path: '/v1/statement',
           method: 'POST',
@@ -122,7 +123,26 @@ class TrinoClient {
     })
   }
 
-  query(query) {
+  query(opts) {
+    let query
+    let meta_callback
+    let columns_callback
+    let error_callback
+    const headers = {}
+    if (typeof opts === 'object') {
+      query = opts.query
+      meta_callback = opts.meta
+      columns_callback = opts.columns
+      error_callback = opts.error
+      if (opts.catalog) {
+        headers['X-Trino-Catalog'] = opts.catalog
+        if (opts.schema) {
+          headers['X-Trino-Schema'] = opts.schema
+        }
+      }
+    } else {
+      query = opts
+    }
     const bodyStream = new TrinoBodyStreamer()
     let isCancelled = false
     bodyStream.cancel = () => isCancelled = true;
@@ -130,9 +150,10 @@ class TrinoClient {
       try {
         let i = 0
         let nextUri
+        let meta
         do {
           try {
-            const meta = await this._request(query, bodyStream, nextUri, isCancelled)
+            meta = await this._request({ query, bodyStream, nextUri, isCancelled, headers })
             i = 0
             nextUri = meta.nextUri
           } catch (err) {
@@ -140,13 +161,22 @@ class TrinoClient {
             // and the client should try again in 50-100 milliseconds
             if (err.statusCode === 503 && i < 10) {
               // retry w/ exp backoff and jitter. max 10s
-              await new Promise(resolve => setTimeout(resolve, Math.random() * Math.min(10000, 100 * (2 ** i))))
+              await new Promise((resolve) => setTimeout(resolve, Math.random() * Math.min(10000, 100 * (2 ** i))))
               i += 1
               continue
             }
             throw err
           }
         } while (nextUri)
+        if (meta_callback) {
+          meta_callback(meta)
+        }
+        if (columns_callback && meta.columns) {
+          columns_callback(meta.columns)
+        }
+        if (error_callback && meta.error) {
+          error_callback(meta.error)
+        }
       } catch (err) {
         bodyStream.destroy(err)
       }

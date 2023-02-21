@@ -2,7 +2,7 @@ const { Readable, Writable } = require('stream')
 
 
 const propagateDestroy = (err, { src, dest = [] } = {}) => {
-  [src, ...dest].filter(stream => stream).forEach((stream) => {
+  [src, ...dest].filter((stream) => stream).forEach((stream) => {
     if (
       !stream.destroyed
       && (
