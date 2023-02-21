@@ -52,6 +52,7 @@
       }, {
         "enforceForRenamedProperties": false
       }],
-      "consistent-return": "off"
+      "consistent-return": "off",
+      "camelcase": "off"
   }
 }

@@ -31,7 +31,7 @@ class TrinoClient {
     })
   }
 
-  _request(query, bodyStream, nextUri, isCancelled, headers) {
+  _request({ query, bodyStream, nextUri, isCancelled, headers }) {
     return new Promise((resolve, reject) => {
       const options = {
         agent: this.httpAgent,
@@ -128,19 +128,19 @@ class TrinoClient {
     let meta_callback
     let columns_callback
     let error_callback
-    let headers = {}
+    const headers = {}
     if (typeof opts === 'object') {
       query = opts.query
       meta_callback = opts.meta
       columns_callback = opts.columns
       error_callback = opts.error
       if (opts.catalog) {
-        headers['X-Trino-Catalog'] = opts.catalog;
+        headers['X-Trino-Catalog'] = opts.catalog
         if (opts.schema) {
-          headers['X-Trino-Schema'] = opts.schema;
+          headers['X-Trino-Schema'] = opts.schema
         }
       }
-    }else {
+    } else {
       query = opts
     }
     const bodyStream = new TrinoBodyStreamer()
@@ -153,7 +153,7 @@ class TrinoClient {
         let meta
         do {
           try {
-            meta = await this._request(query, bodyStream, nextUri, isCancelled, headers)
+            meta = await this._request({ query, bodyStream, nextUri, isCancelled, headers })
             i = 0
             nextUri = meta.nextUri
           } catch (err) {
@@ -161,7 +161,7 @@ class TrinoClient {
             // and the client should try again in 50-100 milliseconds
             if (err.statusCode === 503 && i < 10) {
               // retry w/ exp backoff and jitter. max 10s
-              await new Promise(resolve => setTimeout(resolve, Math.random() * Math.min(10000, 100 * (2 ** i))))
+              await new Promise((resolve) => setTimeout(resolve, Math.random() * Math.min(10000, 100 * (2 ** i))))
               i += 1
               continue
             }

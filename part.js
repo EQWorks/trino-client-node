@@ -66,12 +66,12 @@ class PartStreamer extends Writable {
     if (this._isPartInit) {
       return
     }
-    const gzipStream = createGzip({ chunkSize: 1024*32, flush: 1 })
+    const gzipStream = createGzip({ chunkSize: 1024 * 32, flush: 1 })
     const partStream = new Readable({
       // highWaterMark: 1024,
       read() {
         this.emit('_read')
-      }
+      },
     })
     gzipStream.once('error', (err) => {
       if (this._reject) {
